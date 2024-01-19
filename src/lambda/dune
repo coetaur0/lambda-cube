@@ -1,0 +1,13 @@
+(executable
+ (name lambda)
+ (libraries cube)
+ (preprocess
+  (pps ppx_deriving.show))
+ (promote
+  (until-clean)
+  (into ../..)))
+
+(menhir
+ (modules parser))
+
+(ocamllex lexer)

@@ -1,0 +1,3 @@
+(library
+ (name cube)
+ (libraries core_unix.command_unix))
