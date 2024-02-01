@@ -11,7 +11,7 @@ let emit_fields emit fields =
 let rec emit_type ty =
   match Ast.Type.(ty.kind) with
   | Arrow (lhs, rhs) -> Printf.sprintf "(arrow %s %s)" (emit_type lhs) (emit_type rhs)
-  | Record fields -> Printf.sprintf "(recty %s)" (emit_fields emit_type fields)
+  | Record fields -> Printf.sprintf "(recty (%s))" (emit_fields emit_type fields)
   | Nat -> "nat"
   | Bool -> "bool"
 
@@ -20,7 +20,7 @@ let rec emit_term term =
   match Ast.Term.(term.kind) with
   | Abs (var, ty, body) -> Printf.sprintf "(abs %s (%s\\ %s))" (emit_type ty) var (emit_term body)
   | App (term, arg) -> Printf.sprintf "(app %s %s)" (emit_term term) (emit_term arg)
-  | Record fields -> Printf.sprintf "(rec %s)" (emit_fields emit_term fields)
+  | Record fields -> Printf.sprintf "(rec (%s))" (emit_fields emit_term fields)
   | Project (term, field) -> Printf.sprintf "(proj %s %s)" (emit_term term) field
   | Let (var, value, body) ->
     Printf.sprintf "(let %s (%s\\ %s))" (emit_term value) var (emit_term body)
