@@ -1,0 +1,273 @@
+% ----- Association lists ------------------------------------------------------------------------ %
+
+kind pair type -> type -> type.
+
+type pr A -> B -> pair A B.
+
+% [mapv P L L'] maps the association list [L] to [L'] by applying the predicate [P] to every value 
+% [L] (the second element of each pair in L).
+type mapv (A -> B -> o) -> list (pair K A) -> list (pair K B) -> o.
+
+mapv _ nil nil.
+
+mapv P ((pr K V) :: R) ((pr K V') :: R') :-
+  P V V',
+  mapv P R R'.
+
+% [find K L V] finds the value [V] associated to some key [K] in the association list [L].
+% The predicate fails if [K] is absent from [L].
+type find A -> list (pair A B) -> B -> o.
+
+find K ((pr K V) :: _) V.
+
+find K ((pr K' _) :: R) V :-
+  not (K = K'),
+  find K R V.
+
+% [forall P L] checks that every value in [L] satisfies the predicate [P].
+type forall (B -> o) -> list (pair A B) -> o.
+
+forall _ nil.
+
+forall P ((pr _ V) :: R) :-
+  P V,
+  forall P R.
+
+% ----- Types ------------------------------------------------------------------------------------ %
+
+kind ty type.
+
+type arrow ty -> ty -> ty.
+type recty list (pair string ty) -> ty.
+type nat ty.
+type bool ty.
+
+% ----- Terms ------------------------------------------------------------------------------------ %
+
+kind term type.
+
+type abs ty -> (term -> term) -> term.
+type app term -> term -> term.
+type rec list (pair string term) -> term.
+type proj term -> string -> term.
+type let term -> (term -> term) -> term.
+type if term -> term -> term -> term.
+type eq term -> term -> term.
+type nt term -> term.
+type succ term -> term.
+type pre term -> term.
+type tt term.
+type ff term.
+type zero term.
+
+% ----- Static semantics ------------------------------------------------------------------------- %
+
+% [typeof Tm Ty] associates a term [Tm] to its type [Ty].
+type typeof term -> ty -> o.
+
+typeof (abs S Body) (arrow S T) :-
+  pi x\ typeof x S => typeof (Body x) T.
+
+typeof (app Tm Arg) T :-
+  typeof Tm (arrow S T),
+  typeof Arg S.
+
+typeof (rec Fds) (recty FdTys) :-
+  mapv typeof Fds FdTys.
+
+typeof (proj Rec Fd) T :-
+  typeof Rec (recty FdTys),
+  find Fd FdTys T.
+
+typeof (let Bind Body) T :-
+  typeof Bind _,
+  typeof (Body Bind) T.
+
+typeof (if Cond Thn Els) T :-
+  typeof Cond bool,
+  typeof Thn T,
+  typeof Els T.
+
+typeof (eq Lhs Rhs) bool :-
+  typeof Lhs T,
+  typeof Rhs T.
+
+typeof (nt Tm) bool :-
+  typeof Tm bool.
+
+typeof (succ Tm) nat :-
+  typeof Tm nat.
+
+typeof (pre Tm) nat :-
+  typeof Tm nat.
+
+typeof tt bool.
+
+typeof ff bool.
+
+typeof zero nat.
+
+% ----- Big-step dynamic semantics --------------------------------------------------------------- %
+
+% [eval Tm Tm'] maps a term [Tm] to the result of its evaluation [Tm']. 
+% The predicate implements the big-step operational semantics of the simply typed λ-calculus.
+type eval term -> term -> o.
+
+eval (abs S Body) (abs S Body).
+
+eval (app Tm Arg) Res :-
+  eval Tm (abs _ Body),
+  eval Arg Val,
+  eval (Body Val) Res.
+
+eval (rec FdTms) (rec FdVals) :-
+  mapv eval FdTms FdVals.
+
+eval (proj Rec Fd) Res :-
+  eval Rec (rec Fds),
+  find Fd Fds Res.
+
+eval (let Bind Body) Res :-
+  eval Bind Val,
+  eval (Body Val) Res.
+
+eval (if Cond Thn Els) Res :-
+  eval Cond tt,
+  eval Thn Res.
+
+eval (if Cond Thn Els) Res :-
+  eval Cond ff,
+  eval Els Res.
+
+eval (eq Lhs Rhs) tt :-
+  eval Lhs LVal,
+  eval Rhs RVal,
+  LVal = RVal.
+
+eval (eq Lhs Rhs) ff :-
+  eval Lhs LVal,
+  eval Rhs RVal.
+
+eval (nt Tm) tt :-
+  eval Tm ff.
+
+eval (nt Tm) ff :-
+  eval Tm tt.
+
+eval (succ Tm) (succ Val) :-
+  eval Tm Val.
+
+eval (pre (succ Tm)) Res :-
+  eval Tm Res.
+
+eval (pre zero) zero.
+
+eval tt tt.
+
+eval ff ff.
+
+eval zero zero.
+
+% ----- Small-step dynamic semantics ------------------------------------------------------------- %
+
+% [value Tm] checks that the term [Tm] is a value according to the semantics of the simply typed 
+% λ-calculus.
+type value term -> o.
+
+value (abs _ _).
+
+value (rec Fds) :-
+  forall value Fds.
+
+value (succ Tm) :-
+  value Tm.
+
+value tt.
+
+value ff.
+
+value zero.
+
+% [step Tm Tm'] maps a term [Tm] to its reduct [Tm'] using the step relation of simply typed 
+% λ-calculus' small-step semantics.
+type step term -> term -> o.
+
+step (app Tm Arg) (Tm Arg) :-
+  value Tm,
+  value Arg.
+
+step (app Tm Arg) (app Tm Arg') :-
+  value Tm,
+  step Arg Arg'.
+
+step (app Tm Arg) (app Tm' Arg) :-
+  step Tm Tm'.
+
+step (rec ((pr Fd Tm) :: R)) (rec ((pr Fd Tm) :: R')) :-
+  value Tm,
+  step (rec R) (rec R').
+
+step (rec ((pr Fd Tm) :: R)) (rec ((pr Fd Tm') :: R)) :-
+  step Tm Tm'.
+
+step (proj (rec Fds) Fd) Tm :-
+  value (rec Fds),
+  find Fd Fds Tm.
+
+step (proj Rec Fd) (proj Rec' Fd) :-
+  step Rec Rec'.
+
+step (let Val Body) (Body Val) :-
+  value Val.
+
+step (let Val Body) (let Val' Body) :-
+  step Val Val'.
+
+step (if tt Thn Els) Thn.
+
+step (if ff Thn Els) Els.
+
+step (if Cond Thn Els) (if Cond' Thn Els) :-
+  step Cond Cond'.
+
+step (eq Lhs Rhs) tt :-
+  value Lhs,
+  value Rhs,
+  Lhs = Rhs.
+
+step (eq Lhs Rhs) ff :-
+  value Lhs,
+  value Rhs.
+
+step (eq Lhs Rhs) (eq Lhs Rhs') :-
+  value Lhs,
+  step Rhs.
+
+step (eq Lhs Rhs) (eq Lhs' Rhs) :-
+  step Lhs Lhs'.
+
+step (nt tt) ff.
+
+step (nt ff) tt.
+
+step (nt Tm) (nt Tm') :-
+  step Tm Tm'.
+
+step (pre zero) zero.
+
+step (pre (succ Tm)) Tm :-
+  value Tm.
+
+step (pre Tm) (pre Tm') :-
+  step Tm Tm'.
+
+% [eval' Tm Tm'] maps a term [Tm] to the result of its evaluation [Tm']. 
+% The predicate implements the small-step operational semantics of the simply typed λ-calculus.
+type eval' term -> term -> o.
+
+eval' Tm Tm :-
+  value Tm.
+
+eval' Tm Tm'' :-
+  step Tm Tm',
+  eval' Tm Tm''.

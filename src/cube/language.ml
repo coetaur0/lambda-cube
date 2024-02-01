@@ -10,46 +10,75 @@ let pp_location fmt (lpos, rpos) =
   let rchar = rpos.pos_cnum - lpos.pos_bol in
   Format.fprintf fmt "'%s' at line %d, characters %d-%d" filename line lchar rchar
 
-(* ----- Error ---------------------------------------------------------------------------------- *)
+(* ----- Syntax error --------------------------------------------------------------------------- *)
 
-type error_kind = SyntaxError
-
-exception Error of error_kind * location
-
-let pp_error fmt (kind, location) =
-  match kind with
-  | SyntaxError -> Format.fprintf fmt "Syntax error in %a." pp_location location
+exception SyntaxError of location
 
 (* ----- Language definition -------------------------------------------------------------------- *)
 
 module type S = sig
   val name : string
 
+  val semantics : string
+
   type ast
 
   val pp_ast : Format.formatter -> ast -> unit
 
   val parse : Lexing.lexbuf -> ast
+
+  val translate : ast -> string
+
+  val typecheck : string -> string * string
+
+  val eval : string -> string * string
 end
 
 (* ----- Interpreter builder -------------------------------------------------------------------- *)
 
 module Make (L : S) = struct
-  let parse filename src =
-    let lexbuf = Lexing.from_string src in
-    lexbuf.lex_curr_p <- {lexbuf.lex_curr_p with pos_fname = filename};
-    try L.parse lexbuf
-    with _ ->
-      raise (Error (SyntaxError, (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)))
+  open Elpi
 
-  let parse_file path =
+  let parse path =
     In_channel.with_open_text path (fun file ->
         let src = In_channel.input_all file in
-        parse path src )
+        let lexbuf = Lexing.from_string src in
+        lexbuf.lex_curr_p <- {lexbuf.lex_curr_p with pos_fname = path};
+        try L.parse lexbuf
+        with _ -> raise (SyntaxError (Lexing.lexeme_start_p lexbuf, Lexing.lexeme_end_p lexbuf)) )
+
+  let run_elpi elpi program goal variable =
+    try
+      let goal = API.Parse.goal ~elpi ~loc:(API.Ast.Loc.initial "") ~text:goal in
+      let query = API.Compile.query program goal in
+      let exec = API.Compile.optimize query in
+      match API.Execute.once exec with
+      | API.Execute.Success result ->
+        Some (API.Data.StrMap.find variable result.assignments, result.pp_ctx)
+      | _ -> None
+    with API.Compile.CompileError (loc, msg) -> API.Utils.error ?loc msg
 
   let exec filename =
-    try L.pp_ast Format.std_formatter (parse_file filename)
-    with Error (kind, location) -> pp_error Format.std_formatter (kind, location)
+    try
+      let elpi =
+        API.Setup.init ~legacy_parser:false ~builtins:[Builtin.std_builtins]
+          ~file_resolver:(API.Parse.std_resolver ~paths:[] ())
+          ()
+      in
+      let semantics = API.Compile.program ~elpi [API.Parse.program ~elpi ~files:[L.semantics]] in
+      let program = L.translate (parse filename) in
+      let (typecheck, typevar) = L.typecheck program in
+      let (eval, evalvar) = L.eval program in
+      match run_elpi elpi semantics typecheck typevar with
+      | Some (ty, ty_pp_ctx) -> (
+        match run_elpi elpi semantics eval evalvar with
+        | Some (value, val_pp_ctx) ->
+          Format.fprintf Format.std_formatter "%a : %a" (API.Pp.term val_pp_ctx) value
+            (API.Pp.term ty_pp_ctx) ty
+        | None -> print_endline "Runtime error." )
+      | None -> print_endline "Type error."
+    with SyntaxError location ->
+      Format.fprintf Format.std_formatter "Syntax error in %a" pp_location location
 
   let run () =
     let filename =
@@ -58,8 +87,8 @@ module Make (L : S) = struct
     in
     let command =
       Command.basic
-        ~summary:(Printf.sprintf "Parse a %s program" L.name)
-        ~readme:(fun () -> "More detailed information")
+        ~summary:(Printf.sprintf "Type check and execute a %s program" L.name)
+        ~readme:(fun () -> "")
         (Command.Param.map filename ~f:(fun filename () -> exec filename))
     in
     Command_unix.run ~version:"0.1" command
